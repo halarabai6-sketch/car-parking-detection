@@ -21,7 +21,8 @@ CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 
 # --- Detection ---
-DETECTION_INTERVAL_MS = 2000  # Run detection every N milliseconds in auto mode
+DETECTION_INTERVAL_MS = 1000  # Run detection every N milliseconds in live mode
+DETECTION_COOLDOWN_S = 10     # Seconds before re-processing the same plate
 OCR_LANGUAGES = ["en", "fr"]  # Languages for EasyOCR
 
 # --- Gate Signal Server ---

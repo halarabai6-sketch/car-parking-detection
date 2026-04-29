@@ -1,12 +1,16 @@
-"""ParkGuard AI — Camera & Detection Tab"""
+"""ParkGuard AI — Camera & Live Detection Tab
+Continuous video stream with real-time plate detection.
+"""
 import customtkinter as ctk
 import cv2
 import threading
+import time
 from PIL import Image
 from detector import PlateDetector
 from database import get_client_by_plate, check_payment_status, log_access
 from gate_server import gate_state
-from config import CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT, DETECTION_INTERVAL_MS
+from config import (CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
+                    DETECTION_INTERVAL_MS, DETECTION_COOLDOWN_S)
 
 
 class CameraTab:
@@ -15,11 +19,16 @@ class CameraTab:
         self.detector = PlateDetector()
         self.cap = None
         self.running = False
-        self.auto_detect = False
         self.current_frame = None
         self._after_id = None
-        self._detect_after_id = None
         self._model_loaded = False
+
+        # --- Live detection state ---
+        self._detect_thread = None
+        self._detect_lock = threading.Lock()
+        self._latest_detections = []       # shared between threads
+        self._recent_plates = {}           # plate_text -> timestamp (cooldown tracker)
+
         self._build()
 
     def _build(self):
@@ -37,20 +46,14 @@ class CameraTab:
                                        command=self.stop_camera, state="disabled")
         self.btn_stop.pack(side="left", padx=5)
 
-        self.btn_detect = ctk.CTkButton(ctrl, text="\U0001f50d Detect Now", width=130,
-                                         fg_color="#6c5ce7", hover_color="#5b4cdb",
-                                         command=self._run_detection, state="disabled")
-        self.btn_detect.pack(side="left", padx=5)
-
-        self.auto_var = ctk.BooleanVar(value=False)
-        self.auto_switch = ctk.CTkSwitch(ctrl, text="Auto-Detect", variable=self.auto_var,
-                                          command=self._toggle_auto,
-                                          progress_color="#00d4aa")
-        self.auto_switch.pack(side="left", padx=15)
-
         self.status_lbl = ctk.CTkLabel(ctrl, text="Camera stopped", text_color="#888",
                                         font=ctk.CTkFont(size=12))
         self.status_lbl.pack(side="right", padx=10)
+
+        # Live indicator
+        self.live_indicator = ctk.CTkLabel(ctrl, text="", font=ctk.CTkFont(size=12, weight="bold"),
+                                            text_color="#d63031")
+        self.live_indicator.pack(side="right", padx=5)
 
         # Main content: camera + result panel
         content = ctk.CTkFrame(self.parent, fg_color="transparent")
@@ -105,6 +108,20 @@ class CameraTab:
             lbl.pack(side="left", fill="x", expand=True)
             self.info_labels[key] = lbl
 
+        # --- Recent detections log ---
+        sep2 = ctk.CTkFrame(result_frame, height=2, fg_color="#333")
+        sep2.pack(fill="x", padx=20, pady=(15, 5))
+
+        ctk.CTkLabel(result_frame, text="Recent Plates",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#00d4aa").pack(pady=(5, 5))
+
+        self.recent_list = ctk.CTkScrollableFrame(result_frame, fg_color="#0f0f23",
+                                                   height=150)
+        self.recent_list.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+    # ── Camera lifecycle ───────────────────────────────────────────
+
     def start_camera(self):
         if self.running:
             return
@@ -129,28 +146,35 @@ class CameraTab:
             self.running = True
             self.btn_start.configure(state="disabled")
             self.btn_stop.configure(state="normal")
-            self.btn_detect.configure(state="normal")
-            self.status_lbl.configure(text="\U0001f7e2 Camera running", text_color="#00b894")
+            self.status_lbl.configure(text="\U0001f7e2 Live — detecting plates",
+                                      text_color="#00b894")
+            self.live_indicator.configure(text="\u25cf LIVE", text_color="#d63031")
+
+            # Start the frame display loop
             self._update_frame()
+            # Start the background detection thread
+            self._start_detection_thread()
 
         threading.Thread(target=_load_and_start, daemon=True).start()
 
     def stop_camera(self):
         self.running = False
-        self.auto_detect = False
-        self.auto_var.set(False)
         if self._after_id:
             self.parent.after_cancel(self._after_id)
-        if self._detect_after_id:
-            self.parent.after_cancel(self._detect_after_id)
+            self._after_id = None
+        # Wait for detection thread to finish
+        if self._detect_thread and self._detect_thread.is_alive():
+            self._detect_thread.join(timeout=2)
         if self.cap:
             self.cap.release()
             self.cap = None
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
-        self.btn_detect.configure(state="disabled")
         self.status_lbl.configure(text="Camera stopped", text_color="#888")
+        self.live_indicator.configure(text="")
         self.cam_label.configure(image=None, text="Camera stopped")
+
+    # ── Frame display loop (main thread, ~30fps) ──────────────────
 
     def _update_frame(self):
         if not self.running or self.cap is None:
@@ -158,53 +182,87 @@ class CameraTab:
         ret, frame = self.cap.read()
         if ret:
             self.current_frame = frame
-            display = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Overlay detections on the live frame (never freeze)
+            with self._detect_lock:
+                detections = list(self._latest_detections)
+
+            display_frame = frame.copy()
+            if detections:
+                display_frame = self.detector.draw_detections(display_frame, detections)
+
+            display = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(display)
-            # Fit to label size
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(CAMERA_WIDTH, CAMERA_HEIGHT))
+            ctk_img = ctk.CTkImage(light_image=img, dark_image=img,
+                                    size=(CAMERA_WIDTH, CAMERA_HEIGHT))
             self.cam_label.configure(image=ctk_img, text="")
+
         self._after_id = self.parent.after(30, self._update_frame)
 
-    def _toggle_auto(self):
-        self.auto_detect = self.auto_var.get()
-        if self.auto_detect and self.running:
-            self._auto_detect_loop()
+    # ── Background detection thread ───────────────────────────────
 
-    def _auto_detect_loop(self):
-        if not self.auto_detect or not self.running:
-            return
-        self._run_detection()
-        self._detect_after_id = self.parent.after(DETECTION_INTERVAL_MS, self._auto_detect_loop)
+    def _start_detection_thread(self):
+        """Start a daemon thread that continuously runs detection."""
+        self._detect_thread = threading.Thread(target=self._detection_loop, daemon=True)
+        self._detect_thread.start()
 
-    def _run_detection(self):
-        if self.current_frame is None:
-            return
-        frame = self.current_frame.copy()
-        self.status_lbl.configure(text="\U0001f50d Detecting...", text_color="#fdcb6e")
-        self.parent.update()
+    def _detection_loop(self):
+        """Runs YOLO + OCR continuously on the latest frame."""
+        interval_s = DETECTION_INTERVAL_MS / 1000.0
 
-        def _detect():
-            detections = self.detector.detect(frame)
-            annotated = self.detector.draw_detections(frame, detections)
-            # Show annotated frame
-            display = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(display)
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(CAMERA_WIDTH, CAMERA_HEIGHT))
+        while self.running:
+            frame = self.current_frame
+            if frame is None:
+                time.sleep(0.1)
+                continue
+
+            frame_copy = frame.copy()
             try:
-                self.cam_label.configure(image=ctk_img, text="")
+                detections = self.detector.detect(frame_copy)
             except Exception:
-                return
+                detections = []
 
+            # Update shared detection state
+            with self._detect_lock:
+                self._latest_detections = detections
+
+            # Process detected plates (with cooldown deduplication)
             if detections:
                 best = max(detections, key=lambda d: d["confidence"])
                 plate = best["plate_text"]
-                self._process_plate(plate)
+                if plate and not self._is_on_cooldown(plate):
+                    self._recent_plates[plate] = time.time()
+                    # Schedule UI update + DB processing on main thread
+                    try:
+                        self.parent.after(0, lambda p=plate: self._process_plate(p))
+                    except Exception:
+                        pass
             else:
-                self._update_result("—", "No plate detected", "—", "—", "IDLE")
-                self.status_lbl.configure(text="\U0001f7e2 Camera running — no plate found",
-                                          text_color="#00b894")
+                # No plate in view — update status on main thread
+                try:
+                    self.parent.after(0, self._set_idle)
+                except Exception:
+                    pass
 
-        threading.Thread(target=_detect, daemon=True).start()
+            # Sleep before next detection cycle
+            time.sleep(interval_s)
+
+    def _is_on_cooldown(self, plate_text):
+        """Check if a plate was recently processed (within cooldown window)."""
+        last_seen = self._recent_plates.get(plate_text)
+        if last_seen is None:
+            return False
+        return (time.time() - last_seen) < DETECTION_COOLDOWN_S
+
+    def _set_idle(self):
+        """Reset result panel to idle (called from main thread)."""
+        try:
+            self.status_lbl.configure(text="\U0001f7e2 Live — no plate in view",
+                                      text_color="#00b894")
+        except Exception:
+            pass
+
+    # ── Plate processing (runs on main thread) ────────────────────
 
     def _process_plate(self, plate_text):
         if not plate_text:
@@ -220,6 +278,7 @@ class CameraTab:
             log_access(plate_text, None, None, "UNAUTHORIZED", "DENIED")
             self.status_lbl.configure(text=f"\U0001f534 {plate_text} — NOT REGISTERED",
                                       text_color="#d63031")
+            self._add_recent_entry(plate_text, "DENIED")
             return
 
         name = f"{client['first_name']} {client['last_name']}"
@@ -231,12 +290,14 @@ class CameraTab:
             log_access(plate_text, client["id"], name, "AUTHORIZED", "OPEN")
             self.status_lbl.configure(text=f"\U0001f7e2 {plate_text} — GATE OPENED for {name}",
                                       text_color="#00b894")
+            self._add_recent_entry(plate_text, "OPEN", name)
         else:
             self._update_result(plate_text, name, "REGISTERED", "UNPAID \u274c", "DENIED")
             gate_state.set("DENIED")
             log_access(plate_text, client["id"], name, "UNPAID", "DENIED")
             self.status_lbl.configure(text=f"\U0001f7e1 {plate_text} — UNPAID ({name})",
                                       text_color="#fdcb6e")
+            self._add_recent_entry(plate_text, "UNPAID", name)
 
     def _update_result(self, plate, client, status, payment, gate_action):
         try:
@@ -256,5 +317,35 @@ class CameraTab:
                 self.gate_indicator.configure(fg_color="#333")
                 self.gate_icon.configure(text="\u23f8")
                 self.gate_lbl.configure(text="IDLE", text_color="#888")
+        except Exception:
+            pass
+
+    def _add_recent_entry(self, plate_text, action, name=None):
+        """Add an entry to the recent plates log panel."""
+        try:
+            ts = time.strftime("%H:%M:%S")
+            if action == "OPEN":
+                color = "#00b894"
+                icon = "\U0001f7e2"
+            elif action == "UNPAID":
+                color = "#fdcb6e"
+                icon = "\U0001f7e1"
+            else:
+                color = "#d63031"
+                icon = "\U0001f534"
+
+            label_text = f"{icon} {ts}  {plate_text}"
+            if name:
+                label_text += f"  ({name})"
+
+            entry = ctk.CTkLabel(self.recent_list, text=label_text,
+                                  font=ctk.CTkFont(size=11),
+                                  text_color=color, anchor="w")
+            entry.pack(fill="x", padx=5, pady=1, anchor="nw")
+
+            # Keep only the last 50 entries
+            children = self.recent_list.winfo_children()
+            if len(children) > 50:
+                children[0].destroy()
         except Exception:
             pass
