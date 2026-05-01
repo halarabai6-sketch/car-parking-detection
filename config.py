@@ -6,10 +6,9 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- Model ---
-# Auto-find the .pt model file in the model/ directory
 _model_dir = os.path.join(BASE_DIR, "model")
-_pt_files = [f for f in os.listdir(_model_dir) if f.endswith(".pt")] if os.path.isdir(_model_dir) else []
-MODEL_PATH = os.path.join(_model_dir, _pt_files[0]) if _pt_files else os.path.join(_model_dir, "best.pt")
+MODEL_PATH = os.path.join(_model_dir, "yolov8n_plate.pt")          # Detects plate location
+READER_MODEL_PATH = os.path.join(_model_dir, "PlateReaderyolo.pt")  # Reads characters on plate
 CONFIDENCE_THRESHOLD = 0.4
 
 # --- Database ---
