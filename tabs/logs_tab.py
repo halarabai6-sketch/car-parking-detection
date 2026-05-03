@@ -13,18 +13,18 @@ class LogsTab:
         top = ctk.CTkFrame(self.parent, fg_color="transparent")
         top.pack(fill="x", padx=15, pady=10)
 
-        ctk.CTkLabel(top, text="\U0001f4cb Access Logs",
+        ctk.CTkLabel(top, text="\U0001f4cb Historique d'Accès",
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#00d4aa").pack(side="left", padx=5)
-        ctk.CTkButton(top, text="\U0001f504 Refresh", width=100,
+        ctk.CTkButton(top, text="\U0001f504 Actualiser", width=100,
                       fg_color="#6c5ce7", hover_color="#5b4cdb",
                       command=self.refresh).pack(side="right", padx=5)
 
         # Header
         header = ctk.CTkFrame(self.parent, fg_color="#16213e", corner_radius=8)
         header.pack(fill="x", padx=15, pady=(0, 2))
-        for i, (text, w) in enumerate([("Time", 3), ("Plate", 2), ("Client", 2),
-                                         ("Status", 2), ("Gate", 1)]):
+        for i, (text, w) in enumerate([("Heure", 3), ("Matricule", 2), ("Client", 2),
+                                         ("Statut", 2), ("Portail", 1)]):
             header.columnconfigure(i, weight=w)
             ctk.CTkLabel(header, text=text, font=ctk.CTkFont(size=12, weight="bold"),
                          text_color="#00d4aa").grid(row=0, column=i, padx=8, pady=8, sticky="w")
@@ -37,7 +37,7 @@ class LogsTab:
             w.destroy()
         logs = get_access_logs(limit=200)
         if not logs:
-            ctk.CTkLabel(self.list_frame, text="No access logs yet.",
+            ctk.CTkLabel(self.list_frame, text="Aucun historique d'accès pour le moment.",
                          text_color="#666", font=ctk.CTkFont(size=14)).pack(pady=30)
             return
         for log in logs:
@@ -50,20 +50,35 @@ class LogsTab:
             row.columnconfigure(i, weight=w)
 
         gate_color = "#00b894" if log["gate_action"] == "OPEN" else "#d63031"
-        status_color = "#00b894" if log["status"] == "AUTHORIZED" else (
-            "#fdcb6e" if log["status"] == "UNPAID" else "#d63031")
+        status_color = "#00b894" if log["status"] == "AUTHORIZED" or log["status"] == "AUTORISÉ" else (
+            "#fdcb6e" if log["status"] == "UNPAID" or log["status"] == "NON PAYÉ" else "#d63031")
 
         ts = log["timestamp"][:19] if log["timestamp"] else "—"
-        values = [ts, log.get("plate_number") or "—", log.get("client_name") or "Unknown"]
+        values = [ts, log.get("plate_number") or "—", log.get("client_name") or "Inconnu"]
 
         for i, val in enumerate(values):
             ctk.CTkLabel(row, text=val, font=ctk.CTkFont(size=11),
                          anchor="w").grid(row=0, column=i, padx=8, pady=8, sticky="w")
 
-        ctk.CTkLabel(row, text=log["status"], font=ctk.CTkFont(size=11, weight="bold"),
+        status_map = {
+            "AUTHORIZED": "AUTORISÉ",
+            "UNPAID": "NON PAYÉ",
+            "UNAUTHORIZED": "NON AUTORISÉ",
+            "UNREADABLE": "ILLISIBLE",
+            "ILLISIBLE": "ILLISIBLE"
+        }
+        display_status = status_map.get(log["status"], log["status"])
+        
+        gate_map = {
+            "OPEN": "OUVERT",
+            "DENIED": "REFUSÉ"
+        }
+        display_gate = gate_map.get(log["gate_action"], log["gate_action"])
+
+        ctk.CTkLabel(row, text=display_status, font=ctk.CTkFont(size=11, weight="bold"),
                      text_color=status_color, anchor="w").grid(row=0, column=3, padx=8, pady=8, sticky="w")
 
         icon = "\U0001f7e2" if log["gate_action"] == "OPEN" else "\U0001f534"
-        ctk.CTkLabel(row, text=f"{icon} {log['gate_action']}",
+        ctk.CTkLabel(row, text=f"{icon} {display_gate}",
                      font=ctk.CTkFont(size=11, weight="bold"),
                      text_color=gate_color).grid(row=0, column=4, padx=8, pady=8, sticky="w")

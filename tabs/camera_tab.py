@@ -5,6 +5,7 @@ import customtkinter as ctk
 import cv2
 import threading
 import time
+import re
 from PIL import Image
 from detector import PlateDetector
 from database import get_client_by_plate, check_payment_status, log_access
@@ -28,6 +29,8 @@ class CameraTab:
         self._detect_lock = threading.Lock()
         self._latest_detections = []       # shared between threads
         self._recent_plates = {}           # plate_text -> timestamp (cooldown tracker)
+        self._last_plate_seen_time = 0
+        self._is_gate_open_for_car = False
 
         self._build()
 
@@ -36,17 +39,17 @@ class CameraTab:
         ctrl = ctk.CTkFrame(self.parent, fg_color="transparent")
         ctrl.pack(fill="x", padx=15, pady=10)
 
-        self.btn_start = ctk.CTkButton(ctrl, text="\u25b6 Start Camera", width=140,
+        self.btn_start = ctk.CTkButton(ctrl, text="\u25b6 Démarrer Caméra", width=160,
                                         fg_color="#00d4aa", hover_color="#00b894",
                                         text_color="#000", command=self.start_camera)
         self.btn_start.pack(side="left", padx=5)
 
-        self.btn_stop = ctk.CTkButton(ctrl, text="\u23f9 Stop", width=100,
+        self.btn_stop = ctk.CTkButton(ctrl, text="\u23f9 Arrêter", width=100,
                                        fg_color="#d63031", hover_color="#c0392b",
                                        command=self.stop_camera, state="disabled")
         self.btn_stop.pack(side="left", padx=5)
 
-        self.status_lbl = ctk.CTkLabel(ctrl, text="Camera stopped", text_color="#888",
+        self.status_lbl = ctk.CTkLabel(ctrl, text="Caméra arrêtée", text_color="#888",
                                         font=ctk.CTkFont(size=12))
         self.status_lbl.pack(side="right", padx=10)
 
@@ -65,7 +68,7 @@ class CameraTab:
         # Camera feed
         cam_frame = ctk.CTkFrame(content, fg_color="#1a1a2e", corner_radius=12)
         cam_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        self.cam_label = ctk.CTkLabel(cam_frame, text="Camera Feed\n\nClick 'Start Camera' to begin",
+        self.cam_label = ctk.CTkLabel(cam_frame, text="Flux de Caméra\n\nCliquez sur 'Démarrer Caméra' pour commencer",
                                        font=ctk.CTkFont(size=16), text_color="#555")
         self.cam_label.pack(expand=True, fill="both", padx=10, pady=10)
 
@@ -73,7 +76,7 @@ class CameraTab:
         result_frame = ctk.CTkFrame(content, fg_color="#1a1a2e", corner_radius=12)
         result_frame.grid(row=0, column=1, sticky="nsew")
 
-        ctk.CTkLabel(result_frame, text="Detection Result",
+        ctk.CTkLabel(result_frame, text="Résultat de Détection",
                      font=ctk.CTkFont(size=16, weight="bold"),
                      text_color="#00d4aa").pack(pady=(20, 15))
 
@@ -86,7 +89,7 @@ class CameraTab:
                                        font=ctk.CTkFont(size=40))
         self.gate_icon.place(relx=0.5, rely=0.5, anchor="center")
 
-        self.gate_lbl = ctk.CTkLabel(result_frame, text="IDLE",
+        self.gate_lbl = ctk.CTkLabel(result_frame, text="EN ATTENTE",
                                       font=ctk.CTkFont(size=18, weight="bold"),
                                       text_color="#888")
         self.gate_lbl.pack(pady=(5, 15))
@@ -95,8 +98,8 @@ class CameraTab:
         sep.pack(fill="x", padx=20, pady=5)
 
         # Detection info labels
-        info_data = [("Plate:", "plate"), ("Client:", "client"),
-                     ("Status:", "status"), ("Payment:", "payment")]
+        info_data = [("Matricule:", "plate"), ("Client:", "client"),
+                     ("Statut:", "status"), ("Paiement:", "payment")]
         self.info_labels = {}
         for title, key in info_data:
             row = ctk.CTkFrame(result_frame, fg_color="transparent")
@@ -112,7 +115,7 @@ class CameraTab:
         sep2 = ctk.CTkFrame(result_frame, height=2, fg_color="#333")
         sep2.pack(fill="x", padx=20, pady=(15, 5))
 
-        ctk.CTkLabel(result_frame, text="Recent Plates",
+        ctk.CTkLabel(result_frame, text="Plaques Récentes",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#00d4aa").pack(pady=(5, 5))
 
@@ -125,7 +128,7 @@ class CameraTab:
     def start_camera(self):
         if self.running:
             return
-        self.status_lbl.configure(text="Loading model...", text_color="#fdcb6e")
+        self.status_lbl.configure(text="Chargement du modèle...", text_color="#fdcb6e")
         self.parent.update()
 
         def _load_and_start():
@@ -133,12 +136,12 @@ class CameraTab:
                 ok, msg = self.detector.load()
                 self._model_loaded = ok
                 if not ok:
-                    self.status_lbl.configure(text=f"Model error: {msg}", text_color="#d63031")
+                    self.status_lbl.configure(text=f"Erreur modèle: {msg}", text_color="#d63031")
                     return
 
             self.cap = cv2.VideoCapture(CAMERA_INDEX)
             if not self.cap.isOpened():
-                self.status_lbl.configure(text="Cannot open camera!", text_color="#d63031")
+                self.status_lbl.configure(text="Impossible d'ouvrir la caméra!", text_color="#d63031")
                 return
 
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
@@ -146,9 +149,9 @@ class CameraTab:
             self.running = True
             self.btn_start.configure(state="disabled")
             self.btn_stop.configure(state="normal")
-            self.status_lbl.configure(text="\U0001f7e2 Live — detecting plates",
+            self.status_lbl.configure(text="\U0001f7e2 En direct — détection de plaques",
                                       text_color="#00b894")
-            self.live_indicator.configure(text="\u25cf LIVE", text_color="#d63031")
+            self.live_indicator.configure(text="\u25cf EN DIRECT", text_color="#d63031")
 
             # Start the frame display loop
             self._update_frame()
@@ -170,9 +173,9 @@ class CameraTab:
             self.cap = None
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
-        self.status_lbl.configure(text="Camera stopped", text_color="#888")
+        self.status_lbl.configure(text="Caméra arrêtée", text_color="#888")
         self.live_indicator.configure(text="")
-        self.cam_label.configure(image=None, text="Camera stopped")
+        self.cam_label.configure(image=None, text="Caméra arrêtée")
 
     # ── Frame display loop (main thread, ~30fps) ──────────────────
 
@@ -228,6 +231,7 @@ class CameraTab:
 
             # Process detected plates (with cooldown deduplication)
             if detections:
+                self._last_plate_seen_time = time.time()
                 best = max(detections, key=lambda d: d["confidence"])
                 plate = best["plate_text"]
                 if plate and not self._is_on_cooldown(plate):
@@ -243,6 +247,17 @@ class CameraTab:
                     self.parent.after(0, self._set_idle)
                 except Exception:
                     pass
+                
+                # Auto-close delay logic
+                if self._is_gate_open_for_car and self._last_plate_seen_time > 0:
+                    if time.time() - self._last_plate_seen_time > 10.0:
+                        gate_state.set("DENIED")
+                        self._is_gate_open_for_car = False
+                        self._last_plate_seen_time = 0
+                        try:
+                            self.parent.after(0, self._close_gate_ui)
+                        except Exception:
+                            pass
 
             # Sleep before next detection cycle
             time.sleep(interval_s)
@@ -257,7 +272,16 @@ class CameraTab:
     def _set_idle(self):
         """Reset result panel to idle (called from main thread)."""
         try:
-            self.status_lbl.configure(text="\U0001f7e2 Live — no plate in view",
+            self.status_lbl.configure(text="\U0001f7e2 En direct — aucune plaque visible",
+                                      text_color="#00b894")
+        except Exception:
+            pass
+
+    def _close_gate_ui(self):
+        """Reset result panel after auto-close."""
+        try:
+            self._update_result("—", "—", "—", "—", "IDLE")
+            self.status_lbl.configure(text="\U0001f7e2 En direct — portail refermé (aucune plaque)",
                                       text_color="#00b894")
         except Exception:
             pass
@@ -266,17 +290,30 @@ class CameraTab:
 
     def _process_plate(self, plate_text):
         if not plate_text:
-            self._update_result("???", "Could not read plate", "—", "—", "DENIED")
-            gate_state.set("DENIED")
-            log_access(plate_text, None, None, "UNREADABLE", "DENIED")
+            self._update_result("???", "Impossible de lire la plaque", "—", "—", "DENIED")
+            if not self._is_gate_open_for_car:
+                gate_state.set("DENIED")
+            log_access(plate_text, None, None, "ILLISIBLE", "DENIED")
+            return
+
+        # Validate Moroccan plate format
+        if not re.match(r"^\d{1,5}-[A-Z]-\d{1,2}$", plate_text):
+            self._update_result(plate_text, "FORMAT INVALIDE", "ILLISIBLE", "—", "DENIED")
+            if not self._is_gate_open_for_car:
+                gate_state.set("DENIED")
+            log_access(plate_text, None, None, "ILLISIBLE", "DENIED")
+            self.status_lbl.configure(text=f"\U0001f534 {plate_text} — FORMAT INVALIDE",
+                                      text_color="#d63031")
+            self._add_recent_entry(plate_text, "DENIED", "Format Invalide")
             return
 
         client = get_client_by_plate(plate_text)
         if client is None:
-            self._update_result(plate_text, "NOT REGISTERED", "UNAUTHORIZED", "—", "DENIED")
-            gate_state.set("DENIED")
-            log_access(plate_text, None, None, "UNAUTHORIZED", "DENIED")
-            self.status_lbl.configure(text=f"\U0001f534 {plate_text} — NOT REGISTERED",
+            self._update_result(plate_text, "NON ENREGISTRÉ", "NON AUTORISÉ", "—", "DENIED")
+            if not self._is_gate_open_for_car:
+                gate_state.set("DENIED")
+            log_access(plate_text, None, None, "NON AUTORISÉ", "DENIED")
+            self.status_lbl.configure(text=f"\U0001f534 {plate_text} — NON ENREGISTRÉ",
                                       text_color="#d63031")
             self._add_recent_entry(plate_text, "DENIED")
             return
@@ -285,17 +322,19 @@ class CameraTab:
         paid = check_payment_status(client["id"])
 
         if paid:
-            self._update_result(plate_text, name, "REGISTERED", "PAID \u2705", "OPEN")
+            self._update_result(plate_text, name, "ENREGISTRÉ", "PAYÉ \u2705", "OPEN")
             gate_state.set("OPEN")
-            log_access(plate_text, client["id"], name, "AUTHORIZED", "OPEN")
-            self.status_lbl.configure(text=f"\U0001f7e2 {plate_text} — GATE OPENED for {name}",
+            self._is_gate_open_for_car = True
+            log_access(plate_text, client["id"], name, "AUTORISÉ", "OPEN")
+            self.status_lbl.configure(text=f"\U0001f7e2 {plate_text} — PORTAIL OUVERT pour {name}",
                                       text_color="#00b894")
             self._add_recent_entry(plate_text, "OPEN", name)
         else:
-            self._update_result(plate_text, name, "REGISTERED", "UNPAID \u274c", "DENIED")
-            gate_state.set("DENIED")
-            log_access(plate_text, client["id"], name, "UNPAID", "DENIED")
-            self.status_lbl.configure(text=f"\U0001f7e1 {plate_text} — UNPAID ({name})",
+            self._update_result(plate_text, name, "ENREGISTRÉ", "NON PAYÉ \u274c", "DENIED")
+            if not self._is_gate_open_for_car:
+                gate_state.set("DENIED")
+            log_access(plate_text, client["id"], name, "NON PAYÉ", "DENIED")
+            self.status_lbl.configure(text=f"\U0001f7e1 {plate_text} — NON PAYÉ ({name})",
                                       text_color="#fdcb6e")
             self._add_recent_entry(plate_text, "UNPAID", name)
 
@@ -308,15 +347,15 @@ class CameraTab:
             if gate_action == "OPEN":
                 self.gate_indicator.configure(fg_color="#00b894")
                 self.gate_icon.configure(text="\u2714")
-                self.gate_lbl.configure(text="GATE OPEN", text_color="#00b894")
+                self.gate_lbl.configure(text="PORTAIL OUVERT", text_color="#00b894")
             elif gate_action == "DENIED":
                 self.gate_indicator.configure(fg_color="#d63031")
                 self.gate_icon.configure(text="\u2716")
-                self.gate_lbl.configure(text="GATE CLOSED", text_color="#d63031")
+                self.gate_lbl.configure(text="PORTAIL FERMÉ", text_color="#d63031")
             else:
                 self.gate_indicator.configure(fg_color="#333")
                 self.gate_icon.configure(text="\u23f8")
-                self.gate_lbl.configure(text="IDLE", text_color="#888")
+                self.gate_lbl.configure(text="EN ATTENTE", text_color="#888")
         except Exception:
             pass
 

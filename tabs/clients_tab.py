@@ -13,26 +13,26 @@ class ClientsTab:
         top = ctk.CTkFrame(self.parent, fg_color="transparent")
         top.pack(fill="x", padx=15, pady=10)
 
-        ctk.CTkButton(top, text="+ Add Client", width=130,
+        ctk.CTkButton(top, text="+ Ajouter Client", width=140,
                       fg_color="#00d4aa", hover_color="#00b894",
                       text_color="#000", command=self._add_dialog).pack(side="left", padx=5)
 
         self.search_var = ctk.StringVar()
         search_entry = ctk.CTkEntry(top, textvariable=self.search_var,
-                                     placeholder_text="\U0001f50d Search by name or plate...",
-                                     width=250)
+                                     placeholder_text="\U0001f50d Rechercher par nom ou matricule...",
+                                     width=280)
         search_entry.pack(side="left", padx=10)
         search_entry.bind("<KeyRelease>", lambda e: self.refresh())
 
-        ctk.CTkButton(top, text="\U0001f504 Refresh", width=100,
+        ctk.CTkButton(top, text="\U0001f504 Actualiser", width=100,
                       fg_color="#6c5ce7", hover_color="#5b4cdb",
                       command=self.refresh).pack(side="right", padx=5)
 
         # Table header
         header = ctk.CTkFrame(self.parent, fg_color="#16213e", corner_radius=8)
         header.pack(fill="x", padx=15, pady=(0, 2))
-        cols = [("Name", 3), ("Phone", 2), ("Email", 2), ("Plate", 2),
-                ("Vehicle", 1), ("Actions", 2)]
+        cols = [("Nom", 3), ("Téléphone", 2), ("Email", 2), ("Matricule", 2),
+                ("Véhicule", 1), ("Actions", 2)]
         for i, (text, weight) in enumerate(cols):
             header.columnconfigure(i, weight=weight)
             ctk.CTkLabel(header, text=text, font=ctk.CTkFont(size=12, weight="bold"),
@@ -47,7 +47,7 @@ class ClientsTab:
         query = self.search_var.get().strip()
         clients = search_clients(query) if query else get_all_clients()
         if not clients:
-            ctk.CTkLabel(self.list_frame, text="No clients found.",
+            ctk.CTkLabel(self.list_frame, text="Aucun client trouvé.",
                          text_color="#666", font=ctk.CTkFont(size=14)).pack(pady=30)
             return
         for c in clients:
@@ -68,10 +68,10 @@ class ClientsTab:
 
         actions = ctk.CTkFrame(row, fg_color="transparent")
         actions.grid(row=0, column=5, padx=5, pady=5, sticky="w")
-        ctk.CTkButton(actions, text="Edit", width=55, height=28,
+        ctk.CTkButton(actions, text="Éditer", width=55, height=28,
                       fg_color="#0984e3", hover_color="#0873c4", font=ctk.CTkFont(size=11),
                       command=lambda c=client: self._edit_dialog(c)).pack(side="left", padx=2)
-        ctk.CTkButton(actions, text="Delete", width=55, height=28,
+        ctk.CTkButton(actions, text="Supprimer", width=75, height=28,
                       fg_color="#d63031", hover_color="#c0392b", font=ctk.CTkFont(size=11),
                       command=lambda c=client: self._delete_confirm(c)).pack(side="left", padx=2)
 
@@ -83,10 +83,10 @@ class ClientsTab:
         return plate_str, "", ""
 
     def _add_dialog(self):
-        self._open_form("Add New Client", {}, self._save_new)
+        self._open_form("Ajouter Nouveau Client", {}, self._save_new)
 
     def _edit_dialog(self, client):
-        self._open_form("Edit Client", client, lambda data: self._save_edit(client["id"], data))
+        self._open_form("Éditer Client", client, lambda data: self._save_edit(client["id"], data))
 
     def _open_form(self, title, data, on_save):
         dialog = ctk.CTkToplevel(self.parent)
@@ -102,8 +102,8 @@ class ClientsTab:
         fields = {}
 
         # Regular text fields
-        for label, key in [("First Name", "first_name"), ("Last Name", "last_name"),
-                           ("Phone", "phone"), ("Email", "email")]:
+        for label, key in [("Prénom", "first_name"), ("Nom", "last_name"),
+                           ("Téléphone", "phone"), ("Email", "email")]:
             ctk.CTkLabel(dialog, text=label, font=ctk.CTkFont(size=12),
                          anchor="w").pack(fill="x", padx=30, pady=(4, 0))
             entry = ctk.CTkEntry(dialog, width=380)
@@ -112,7 +112,7 @@ class ClientsTab:
             fields[key] = entry
 
         # --- Plate Number: 3 fields for Moroccan format ---
-        ctk.CTkLabel(dialog, text="Plate Number  (e.g. 78904 - \u0647 - 6)",
+        ctk.CTkLabel(dialog, text="Matricule (ex: 78904 - \u0647 - 6)",
                      font=ctk.CTkFont(size=12), anchor="w").pack(fill="x", padx=30, pady=(8, 0))
 
         plate_frame = ctk.CTkFrame(dialog, fg_color="transparent")
@@ -123,7 +123,7 @@ class ClientsTab:
         if data.get("plate_number"):
             p1, p2, p3 = self._parse_plate(data["plate_number"])
 
-        plate_1 = ctk.CTkEntry(plate_frame, width=130, placeholder_text="Numbers",
+        plate_1 = ctk.CTkEntry(plate_frame, width=130, placeholder_text="Chiffres",
                                 font=ctk.CTkFont(size=14), justify="center")
         plate_1.insert(0, p1)
         plate_1.pack(side="left", padx=(0, 5))
@@ -131,7 +131,7 @@ class ClientsTab:
         ctk.CTkLabel(plate_frame, text=" - ", font=ctk.CTkFont(size=16, weight="bold"),
                      text_color="#00d4aa").pack(side="left")
 
-        plate_2 = ctk.CTkEntry(plate_frame, width=80, placeholder_text="Letter",
+        plate_2 = ctk.CTkEntry(plate_frame, width=80, placeholder_text="Lettre",
                                 font=ctk.CTkFont(size=14), justify="center")
         plate_2.insert(0, p2)
         plate_2.pack(side="left", padx=5)
@@ -139,7 +139,7 @@ class ClientsTab:
         ctk.CTkLabel(plate_frame, text=" - ", font=ctk.CTkFont(size=16, weight="bold"),
                      text_color="#00d4aa").pack(side="left")
 
-        plate_3 = ctk.CTkEntry(plate_frame, width=80, placeholder_text="Region",
+        plate_3 = ctk.CTkEntry(plate_frame, width=80, placeholder_text="Région",
                                 font=ctk.CTkFont(size=14), justify="center")
         plate_3.insert(0, p3)
         plate_3.pack(side="left", padx=(5, 0))
@@ -147,11 +147,11 @@ class ClientsTab:
         fields["plate_parts"] = (plate_1, plate_2, plate_3)
 
         # Vehicle type dropdown
-        ctk.CTkLabel(dialog, text="Vehicle Type", font=ctk.CTkFont(size=12),
+        ctk.CTkLabel(dialog, text="Type de Véhicule", font=ctk.CTkFont(size=12),
                      anchor="w").pack(fill="x", padx=30, pady=(8, 0))
         vehicle_menu = ctk.CTkComboBox(dialog, width=380,
-                                        values=["Car", "Motorcycle", "Truck", "Van", "SUV", "Other"])
-        vehicle_menu.set(data.get("vehicle_type", "Car"))
+                                        values=["Voiture", "Moto", "Camion", "Camionnette", "SUV", "Autre"])
+        vehicle_menu.set(data.get("vehicle_type", "Voiture"))
         vehicle_menu.pack(padx=30, pady=(0, 2))
         fields["vehicle_type"] = vehicle_menu
 
@@ -166,7 +166,7 @@ class ClientsTab:
             pp2 = plate_2.get().strip()
             pp3 = plate_3.get().strip()
             if not pp1:
-                msg_lbl.configure(text="Plate number is required!")
+                msg_lbl.configure(text="Le matricule est requis !")
                 return
             plate_number = f"{pp1}-{pp2}-{pp3}" if pp2 or pp3 else pp1
 
@@ -174,7 +174,7 @@ class ClientsTab:
             vals["plate_number"] = plate_number
 
             if not fields["first_name"].get().strip() or not fields["last_name"].get().strip():
-                msg_lbl.configure(text="First and last name are required!")
+                msg_lbl.configure(text="Le nom et le prénom sont requis !")
                 return
 
             vals["first_name"] = fields["first_name"].get().strip()
@@ -187,7 +187,7 @@ class ClientsTab:
             dialog.destroy()
             self.refresh()
 
-        ctk.CTkButton(dialog, text="\u2714  Save Client", height=38, width=200,
+        ctk.CTkButton(dialog, text="\u2714  Sauvegarder Client", height=38, width=200,
                       fg_color="#00d4aa", hover_color="#00b894",
                       text_color="#000", font=ctk.CTkFont(size=14, weight="bold"),
                       command=_do_save).pack(pady=(5, 15))
@@ -202,19 +202,19 @@ class ClientsTab:
 
     def _delete_confirm(self, client):
         dialog = ctk.CTkToplevel(self.parent)
-        dialog.title("Confirm Delete")
+        dialog.title("Confirmer Suppression")
         dialog.geometry("350x160")
         dialog.resizable(False, False)
         dialog.grab_set()
         dialog.attributes("-topmost", True)
 
-        ctk.CTkLabel(dialog, text=f"Delete {client['first_name']} {client['last_name']}?",
+        ctk.CTkLabel(dialog, text=f"Supprimer {client['first_name']} {client['last_name']} ?",
                      font=ctk.CTkFont(size=15, weight="bold")).pack(pady=(25, 5))
-        ctk.CTkLabel(dialog, text=f"Plate: {client['plate_number']}",
+        ctk.CTkLabel(dialog, text=f"Matricule: {client['plate_number']}",
                      text_color="#aaa").pack(pady=5)
         btns = ctk.CTkFrame(dialog, fg_color="transparent")
         btns.pack(pady=15)
-        ctk.CTkButton(btns, text="Cancel", width=100, fg_color="#555",
+        ctk.CTkButton(btns, text="Annuler", width=100, fg_color="#555",
                       command=dialog.destroy).pack(side="left", padx=10)
 
         def _do_delete():
@@ -222,5 +222,5 @@ class ClientsTab:
             dialog.destroy()
             self.refresh()
 
-        ctk.CTkButton(btns, text="Delete", width=100, fg_color="#d63031",
+        ctk.CTkButton(btns, text="Supprimer", width=100, fg_color="#d63031",
                       hover_color="#c0392b", command=_do_delete).pack(side="left", padx=10)
